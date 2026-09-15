@@ -1,0 +1,174 @@
+import cv2
+import torch
+import torch.nn as nn
+from torchvision import transforms
+from PIL import Image
+import pyautogui
+import time
+import os
+
+# PyAutoGUI Safety Setting
+pyautogui.FAILSAFE = False
+
+# ---------------------------------------------------------
+# 1. CNN Model Architecture (Configured for 3 Classes)
+# ---------------------------------------------------------
+class CNN(nn.Module):
+    def __init__(self):
+        super(CNN, self).__init__()
+        self.conv_layers = nn.Sequential(
+            nn.Conv2d(3, 32, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.MaxPool2d(2, 2),
+
+            nn.Conv2d(32, 64, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.MaxPool2d(2, 2),
+
+            nn.Conv2d(64, 128, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.MaxPool2d(2, 2)
+        )
+        self.fc_layers = nn.Sequential(
+            nn.Linear(16 * 16 * 128, 256),
+            nn.ReLU(),
+            nn.Linear(256, 3)  # Output layer for 3 classes
+        )
+    
+    def forward(self, x):
+        x = self.conv_layers(x)
+        x = x.view(x.size(0), -1)
+        x = self.fc_layers(x)
+        return x
+
+# ---------------------------------------------------------
+# 2. Setup Device & Load Model Weights
+# ---------------------------------------------------------
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+model = CNN().to(device)
+
+model_path = "hand_gesture_cnn.pth"
+
+# Load Pre-trained Weights with Validation
+try:
+    if not os.path.exists(model_path):
+        raise FileNotFoundError(f"File '{model_path}' current directory mein nahi mili!")
+        
+    model.load_state_dict(torch.load(model_path, map_location=device))
+    model.eval()
+    print(f"✅ Model '{model_path}' successfully loaded on {device}!")
+except Exception as e:
+    print(f"❌ Error loading model: {e  }")
+    print("Tip: Check karein ke .pth file aur app.py ek hi folder mein hon.")
+    exit()
+
+# Class Mapping for 3 Gestures
+CLASS_NAMES = {
+    0: '01_palm',
+    1: '05_thumb',
+    2: '10_down'
+}
+
+# Preprocessing Pipeline (Same as training)
+transform = transforms.Compose([
+    transforms.Resize((128, 128)),
+    transforms.ToTensor(),
+    transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+])
+
+# ---------------------------------------------------------
+# 3. Video Capture Setup
+# ---------------------------------------------------------
+cap = cv2.VideoCapture(1)  # DroidCam default index
+if not cap.isOpened():
+    cap = cv2.VideoCapture(0)  # Fallback to primary camera
+
+last_action_time = time.time()
+action_cooldown = 1.0  # 1 second delay between repeated actions
+
+print("\n🚀 Gesture Controller Active!")
+print("Commands:")
+print(" - Palm   -> Play / Pause (Spacebar)")
+print(" - Thumb  -> Volume UP")
+print(" - Down   -> Volume DOWN")
+print("Press 'q' on camera window to Exit.\n")
+
+# ---------------------------------------------------------
+# 4. Main Real-Time Inference Loop
+# ---------------------------------------------------------
+while cap.isOpened():
+    ret, frame = cap.read()
+    if not ret:
+        print("❌ Camera disconnected or stream ended.")
+        break
+
+    frame = cv2.flip(frame, 1)
+    h, w, _ = frame.shape
+    
+    # Hand Region Crop Box (Centered)
+    box_x1, box_y1 = int(w * 0.25), int(h * 0.20)
+    box_x2, box_y2 = int(w * 0.75), int(h * 0.80)
+    crop = frame[box_y1:box_y2, box_x1:box_x2]
+
+    # Convert to RGB Tensor
+    rgb_crop = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
+    pil_img = Image.fromarray(rgb_crop)
+    img_tensor = transform(pil_img).unsqueeze(0).to(device)
+
+    # Model Prediction
+    with torch.no_grad():
+        outputs = model(img_tensor)
+        probs = torch.softmax(outputs, dim=1)
+        conf, idx = torch.max(probs, 1)
+
+    gesture = CLASS_NAMES.get(idx.item(), "Unknown")
+    conf_score = conf.item() * 100
+
+    current_time = time.time()
+    action_text = "Idle"
+
+    # ---------------------------------------------------------
+    # 5. Execute System Actions (Threshold > 70%)
+    # ---------------------------------------------------------
+    if conf_score > 70.0 and (current_time - last_action_time > action_cooldown):
+        if gesture == '01_palm':
+            pyautogui.press('space')
+            action_text = "Action: PLAY / PAUSE"
+            print(f"🔥 KEY: SPACEBAR | Gesture: {gesture} ({conf_score:.1f}%)")
+            last_action_time = current_time
+
+        elif gesture == '05_thumb':
+            pyautogui.press('volumeup')
+            action_text = "Action: VOL UP"
+            print(f"🔥 KEY: VOLUME UP | Gesture: {gesture} ({conf_score:.1f}%)")
+            last_action_time = current_time
+
+        elif gesture == '10_down':
+            pyautogui.press('volumedown')
+            action_text = "Action: VOL DOWN"
+            print(f"🔥 KEY: VOLUME DOWN | Gesture: {gesture} ({conf_score:.1f}%)")
+            last_action_time = current_time
+
+    # ---------------------------------------------------------
+    # 6. Visual Interface Overlay
+    # ---------------------------------------------------------
+    # Target Box
+    cv2.rectangle(frame, (box_x1, box_y1), (box_x2, box_y2), (255, 120, 0), 2)
+    cv2.putText(frame, "Place Hand Here", (box_x1, box_y1 - 10), 
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 120, 0), 2)
+
+    # Top Status Bar
+    cv2.rectangle(frame, (0, 0), (w, 65), (0, 0, 0), -1)
+    status_color = (0, 255, 0) if conf_score > 70.0 else (0, 165, 255)
+    cv2.putText(frame, f"Gesture: {gesture} ({conf_score:.1f}%)", (15, 25), 
+                cv2.FONT_HERSHEY_SIMPLEX, 0.65, status_color, 2)
+    cv2.putText(frame, f"Status : {action_text}", (15, 50), 
+                cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
+
+    cv2.imshow("Hand Gesture AI Controller", frame)
+
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+
+cap.release()
+cv2.destroyAllWindows()
