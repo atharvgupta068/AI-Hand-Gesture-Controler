@@ -15,7 +15,7 @@
 ---
 
 **Complete notebook + Data + Trained Model:** 
-https://www.kaggle.com/code/zakirali22/hand-gesture-controler
+https://www.kaggle.com/code/atharvgupta068/hand-gesture-controler
 
 ## 📋 Overview
 
