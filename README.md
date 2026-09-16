@@ -86,7 +86,7 @@ Training code lives in [`ai_hand_gestures_controller.ipynb`](./ai_hand_gestures_
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/<zakir-maswani>/AI-Hand-Gesture-Controler.git
+   git clone https://github.com/<atharvgupta068>/AI-Hand-Gesture-Controler.git
    cd gesture-music-controller
    ```
 
